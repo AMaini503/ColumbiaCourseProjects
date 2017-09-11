@@ -56,6 +56,7 @@ def start():
 	orders = Table("orders", "orders.csv")
 
 	customers.buildIndex("CustomerID")
+	customers.buildIndex("ContactTitle")
 	# orders.buildIndex("\"OrderID\"")
 
 	#########################################################
@@ -87,9 +88,18 @@ class FindQuery:
 		#kv_pairs_list = self.aux_info.split(",")
 		kv_pairs_list = ParseCSVString2Array(self.aux_info)
 		# print kv_pairs_list
-		self.query_col_names = map(lambda pair_string: pair_string.split("=")[0].strip(), kv_pairs_list)
-		self.query_col_values = map(lambda pair_string: pair_string.split("=")[1].strip(), kv_pairs_list)
 
+		self.query_col_names = map(lambda pair_string: pair_string.split("=")[0].strip(), kv_pairs_list)
+		#removing double quotes if any
+		self.query_col_names = map(lambda query_col_name: removeDQuotes(query_col_name), self.query_col_names)
+
+		self.query_col_values = map(lambda pair_string: pair_string.split("=")[1].strip(), kv_pairs_list)
+		#remove the double quotes if any
+		self.query_col_values = map(lambda query_col_value: removeDQuotes(query_col_value), self.query_col_values)
+
+
+		# print self.query_col_names
+		# print self.query_col_values
 	def execute(self):
 		
 		#Remember every attribute has string value, so enclose the value in double quotes
@@ -100,18 +110,27 @@ class FindQuery:
 		indexed_query_col_names_set = indexed_columns_names_for_table & query_col_names_set
 		non_indexed_query_col_names_set = query_col_names_set - indexed_query_col_names_set
 
-		print self.query_col_names
-		print self.query_col_values
-		print non_indexed_query_col_names_set
+		# print self.query_col_names
+		# print self.query_col_values
+		# print indexed_query_col_names_set
+		# print non_indexed_query_col_names_set
 		# return []
+
+		#Bad Init
+		num_records_in_result = 0
+		records_in_final_result = None
 
 		#First find records using indices
 		records_found_using_indices = set(range(0, self.table_obj.getRowCount()))
 
 		for col_name in indexed_query_col_names_set:
 			index_for_this_col = self.table_obj.getIndexOn(col_name).getArray()
-			occurences_for_this_col = [i for i,x in enumerate(self.query_col_names)]
+
+			#indices where this column occurs in aux_info in query
+			occurences_for_this_col = [i for i,query_col_name in enumerate(self.query_col_names) if query_col_name == col_name]
+
 			values_for_this_col = [self.query_col_values[i] for i in occurences_for_this_col]
+			# print values_for_this_col
 
 			for val in values_for_this_col:
 
@@ -126,14 +145,62 @@ class FindQuery:
 			if len(records_found_using_indices) == 0:
 				break
 
-		num_records_in_result = len(records_found_using_indices)
-		print str(num_records_in_result) + " records found"
+		num_records_using_indices = len(records_found_using_indices)
+		#print str(num_records_using_indices) + " records found using indices"
 
-		if num_records_in_result > 0:
-			table = PrettyTable(self.table_obj.getAllColNames())
-			for row_string in self.table_obj.getRowsIndexedBy(records_found_using_indices):
-				table.add_row(ParseCSVString2Array(row_string))
-			print table
+
+		if num_records_using_indices  != 0:
+			
+			#num_records_in_result = num_records_using_indices
+			#set nature is retained because set operations are to follow in the code below
+			#sorted_records_found_using_indices = list(records_found_using_indices)
+			#sorted_records_found_using_indices.sort()
+
+			#records_in_final_result = self.table_obj.getRowsIndexedBy(sorted_records_found_using_indices)
+
+			#finding records using the non-indexed columns
+			##############################################
+			records_found_using_non_indices = set(range(0, self.table_obj.getRowCount()))
+			for col_name in non_indexed_query_col_names_set:
+				occurences_for_this_col = [i for i,query_col_name in enumerate(self.query_col_names) if query_col_name == col_name]
+				values_for_this_col = [self.query_col_values[i] for i in occurences_for_this_col]
+				# print self.table_obj.getAllColNames()
+				serial_index_for_this_col_in_rows = self.table_obj.getAllColNames().index(col_name)
+
+				all_rows_in_table = self.table_obj.getAllRows()
+				for val in values_for_this_col:
+
+					#avoid any additional processing of double quotes
+					# print ParseCSVString2Array(all_rows_in_table[75])
+
+					# print serial_index_for_this_col_in_rows
+					# print ParseCSVString2Array(all_rows_in_table[i], csv.QUOTE_NONE)[7]
+					# print val
+					records_with_this_val = set([i for i,row_string in enumerate(all_rows_in_table) if  ParseCSVString2Array(row_string)[serial_index_for_this_col_in_rows] == val])
+
+					# print records_with_this_val
+					records_found_using_non_indices = records_found_using_non_indices & records_with_this_val
+
+					if len(records_found_using_non_indices) == 0:
+						break
+
+				if len(records_found_using_non_indices) == 0:
+						break
+
+			final_set_of_indices = records_found_using_indices & records_found_using_non_indices
+
+			sorted_final_list_of_indices = list(final_set_of_indices)
+			sorted_final_list_of_indices.sort()
+
+			num_records_in_result = len(final_set_of_indices)
+			print str(num_records_in_result) + " records found"
+
+			if num_records_in_result > 0:
+				records_in_final_result = self.table_obj.getRowsIndexedBy(sorted_final_list_of_indices)
+				table = PrettyTable(self.table_obj.getAllColNames())
+				for row_string in records_in_final_result:
+					table.add_row(ParseCSVString2Array(row_string))
+				print table
 		
 
 		
@@ -150,10 +217,12 @@ class Index:
 def ParseCSVString2Array(string):
 	f = StringIO(string)
 
-	reader = csv.reader(f, delimiter=",")
+	reader = csv.reader(f, delimiter=",", skipinitialspace=True)
 	for row in reader:
 		return row
-
+def removeDQuotes(string):
+	string = string.replace("\"", "")
+	return string
 class Table: 
 	def __init__(self, tname, filename):
 		self.name = tname
@@ -180,7 +249,8 @@ class Table:
 
 		#self.all_col_names = self.header_line.split(",")
 		self.all_col_names = ParseCSVString2Array(self.header_line)
-		print self.all_col_names
+		self.all_col_names = map(lambda col_name: removeDQuotes(col_name), self.all_col_names)
+		# print self.all_col_names
 
 		#use this to validate the number of values in insert command
 		self.num_cols = len(self.all_col_names)
@@ -197,6 +267,8 @@ class Table:
 		# print index_of_col
 
 		all_col_values = map(lambda row: row.split(",")[index_of_col], self.rows)
+		#remove double quotes before building hash
+		all_col_values = map(lambda col_value: removeDQuotes(col_value), all_col_values)
 
 		#check if the index needs to be primary o
 
@@ -206,9 +278,11 @@ class Table:
 		hashed_index_on_col = dict()
 		for i,val in enumerate(all_col_values):
 			if val not in hashed_index_on_col:
+				# hashed_index_on_col[val] = []
 				hashed_index_on_col[val] = set()
 				
-			hashed_index_on_col[val].add(i)	
+			# hashed_index_on_col[val].append(i)	
+			hashed_index_on_col[val].add(i)
 		
 		# print hashed_index_on_col.keys()
 		
@@ -239,6 +313,7 @@ class Table:
 		return [self.rows[index] for index in index_list]
 	def getAllColNames(self):
 		return self.all_col_names
-
+	def getAllRows(self):
+		return self.rows
 if __name__ == "__main__":
 	start()
