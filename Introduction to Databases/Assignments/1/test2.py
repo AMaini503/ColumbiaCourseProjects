@@ -1,7 +1,5 @@
-import re
+import csv
 
-string = raw_input(">> ")
-
-pattern = re.compile(r'"([A-za-z0-9]*)"(\s*,\s*"([A-za-z0-9]*)")*')
-match = pattern.match(string)
-print match.groups()
+f = open("customers.csv")
+reader = csv.reader(f, delimiter=",")
+print row[7]
