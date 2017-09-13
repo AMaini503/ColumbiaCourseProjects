@@ -1,18 +1,9 @@
-from threading import Thread
-import string
-from time import sleep
+import re
 
-def printd(args):
-	for d in args:
-		print d
-		sleep(1)
-def printl(args):
-	for l in args:
-		print l;
-		sleep(1)
+pattern_for_constraint_query = re.compile(r"apply\s+unique\s+to\s+([A-za-z0-9]+)\.([A-za-z0-9]+)")
 
-thread1 = Thread(target = printd, args = (list(range(1,11)), ))
-thread2 = Thread(target = printl, args = (list(string.ascii_lowercase), ))
-
-thread1.start()
-thread2.start()
+while(True):
+	string = raw_input(">> ")
+	match = pattern_for_constraint_query.match(string)
+	if match:
+		print match.groups()

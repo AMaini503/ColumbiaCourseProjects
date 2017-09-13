@@ -3,33 +3,117 @@ from prettytable import PrettyTable
 import csv
 from StringIO import StringIO
 from bisect import bisect
-def GetQueryObj(raw_query_text):
-	raw_query_text = raw_query_text.strip()
+import sys, os
 
-	parts = raw_query_text.split(" ")
-	q_type = ""
-	if parts[0].lower() == "find" : 
-		obj = FindQuery(raw_query_text)
-		q_type = "find"
-	elif parts[0].lower() == "insert":
-		obj = InsertQuery(raw_query_text)
-		q_type = "insert"
 
-	return (q_type, obj)
+class GlobalScope:
+	def __init__(self):
+		self.map_tname_to_obj = dict()
+	def getAllTNames(self):
+		return self.map_tname_to_obj.keys()
+	def getTObjFor(self, tname):
+		if tname in self.map_tname_to_obj:
+			return self.map_tname_to_obj[tname]
+		else:
+			print "Table " + tname + " doesn't exist"
+	def addTable(self, table_file_name):
+
+		if table_file_name not in self.map_tname_to_obj:
+			table_name = table_file_name.split(".")[0]
+			table_obj = Table(table_name, table_file_name)
+
+			self.map_tname_to_obj[table_name] = table_obj
+
+	def tableExists(self, tname): 
+		return tname in self.map_tname_to_obj
+
+# def GetQueryObj(raw_query_text):
+# 	raw_query_text = raw_query_text.strip()
+
+# 	parts = raw_query_text.split(" ")
+# 	q_type = ""
+# 	if parts[0].lower() == "find" : 
+# 		obj = FindQuery(raw_query_text)
+# 		q_type = "find"
+# 	elif parts[0].lower() == "insert":
+# 		obj = InsertQuery(raw_query_text)
+# 		q_type = "insert"
+
+# 	return (q_type, obj)
 
 
 def start(): 
 
 	def ParseQuery():
-		pattern = re.compile(r"(find|insert)\s+([A-za-z0-9]+)\s+(.*)", re.I)
-		match = pattern.match(raw_query_text)
+		pattern_for_DM_queries = re.compile(r"(find|insert)\s+([A-Za-z0-9]+)\s+(.*)", re.I)
+		match_for_DM_queries = pattern_for_DM_queries.match(raw_query_text)
 
-		if match:
-			q_type = match.group(1)
-			tname = match.group(2)
-			aux_info = match.group(3)
+		pattern_for_constraint_query = re.compile(r"apply\s+unique\s+to\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
+		match_for_constraint_query = pattern_for_constraint_query.match(raw_query_text)
 
-			return (q_type.lower(), tname.lower(), aux_info)
+		pattern_for_pk_query = re.compile(r"set\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)\s+as\s+pk")
+		match_for_pk_query = pattern_for_pk_query.match(raw_query_text)
+
+		pattern_for_add_table_query = re.compile(r"add\s+table\s+for\s+(.+)")
+		match_for_add_table_query = pattern_for_add_table_query.match(raw_query_text)
+
+		pattern_for_aio_query = re.compile(r"build\s+index\s+on\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
+		match_for_aio_query = pattern_for_aio_query.match(raw_query_text)
+
+		if match_for_DM_queries:
+			q_type = match_for_DM_queries.group(1)
+			tname = match_for_DM_queries.group(2)
+			aux_info = match_for_DM_queries.group(3)
+
+			#check for existence of table
+			if gscope.tableExists(tname):
+				return (q_type.lower(), tname.lower(), aux_info)
+			else:
+				print "Table " + tname + " doesn't exist"
+				return "error"
+		elif match_for_constraint_query: 
+			table_name = match_for_constraint_query.group(1)
+			col_name = match_for_constraint_query.group(2)
+
+			q_type = "unique constraint"
+			tname = table_name
+			aux_info = col_name
+
+			if gscope.tableExists(tname):
+				return (q_type, tname, aux_info)
+			else:
+				print "Table " + tname + " doesn't exist"
+				return "error"
+
+		elif match_for_pk_query:
+			q_type = "pk"
+			table_name = match_for_pk_query.group(1)
+			col_name = match_for_pk_query.group(2)
+
+			if gscope.tableExists(tname):
+				return (q_type, table_name, col_name)
+			else:
+				print "Table " + tname + " doesn't exist"
+				return "error"
+			
+		elif match_for_add_table_query:
+			q_type = "add table"
+			aux_info = match_for_add_table_query.group(1)
+			return (q_type, None, aux_info)
+		elif match_for_aio_query:
+			q_type = "build index"
+			table_name = match_for_aio_query.group(1)
+			col_name = match_for_aio_query.group(2)
+
+			if gscope.tableExists(table_name):
+				return (q_type, table_name, col_name)
+			else:
+				print "Table " + table_name + " doesn't exist"
+				return "error"
+
+		elif raw_query_text.lower().strip() == "show tables":
+			q_type = "show tables"
+			return (q_type, None, None)
 		else:
 			return "Invalid Query"
 
@@ -39,27 +123,66 @@ def start():
 		if result == "Invalid Query":
 			print result
 		else :
+
+			if result == "error": 
+				return
+
 			q_type = result[0]
 			tname = result[1]
 			aux_info = result[2]
-			table_obj = customers if tname == "customers" else orders
 			
 			if q_type == "find":
+				table_obj = gscope.getTObjFor(tname)
 				find_query_obj = FindQuery(table_obj, aux_info)
 				find_query_obj.execute()
-			#would always be an insert because invalid query already handled in parse
-			else:
+			elif q_type  == "insert":
+				table_obj = gscope.getTObjFor(tname)
 				insert_query_obj = InsertQuery(table_obj, aux_info)
 				insert_query_obj.execute()
-		
+			elif q_type == "unique constraint": #handle unique here
+				table_name = tname
+				uc_col_name = aux_info
+				unique_constraint_query = ConstraintQuery(gscope.getTObjFor(table_name), uc_col_name)
+				unique_constraint_query.execute()
+			elif q_type == "pk":
+				table_name = tname
+				pk_col_name = aux_info
+				pk_query = PKQuery(gscope.getTObjFor(table_name), pk_col_name)
+				pk_query.execute()
+			elif q_type == "show tables": 
+				table = PrettyTable(["Table name"])
+				map(lambda tname: table.add_row([tname]), gscope.getAllTNames())
+				print table
+			elif q_type == "add table": 
+				table_file_name = aux_info
+				addtff_query = AddTFFQuery(table_file_name)
+				addtff_query.execute()
+			elif q_type == "build index":
+				table_name = tname
+				col_name = aux_info
+
+				if gscope.tableExists(table_name): 
+					aio_query = BuildIndexOnQuery(gscope.getTObjFor(table_name), col_name)
+					aio_query.execute()
+
+
+	global gscope
+	gscope = GlobalScope()
+
+	#first add tables from the command line
+	for table_file_name  in sys.argv[1:]:
+		addtff_query = AddTFFQuery(table_file_name)
+		addtff_query.execute()
+
+
 
 	#########################################################
-	customers = Table("customers", "customers.csv")
-	orders = Table("orders", "orders.csv")
+	# customers = Table("customers", "customers.csv")
+	# orders = Table("orders", "orders.csv")
 
 	# customers.buildIndex("CustomerID")
 	# customers.buildIndex("ContactTitle")
-	customers.setPrimaryKeyAs("CustomerID")
+	# customers.setPrimaryKeyAs("CustomerID")
 	# orders.buildIndex("\"OrderID\"")
 
 	#########################################################
@@ -74,7 +197,27 @@ def start():
 			sig_exit = True
 		else:
 			HandleQuery(raw_query_text)
-
+# add table for file
+class AddTFFQuery:
+	def __init__(self, table_file_name):
+		self.table_file_name = table_file_name
+	def execute(self):
+		if os.path.isfile(self.table_file_name):
+			gscope.addTable(self.table_file_name)
+			print "Table for " + self.table_file_name + " added successfully"
+		else:
+			print "File " + self.table_file_name + " doesn't exist"
+#Add index on a column of a table
+class BuildIndexOnQuery:
+	def __init__(self, table_obj, col_name): 
+		self.table_obj = table_obj
+		self.col_name = col_name
+	def execute(self): 
+		result = self.table_obj.validateColNames([self.col_name])
+		if result["return_code"] == "pass":
+			self.table_obj.buildIndex(self.col_name)
+		else:
+			print result["err_msg"]
 class InsertQuery:
 	def __init__(self, table_obj, aux_info):
 
@@ -101,32 +244,58 @@ class InsertQuery:
 			if primary_key_col_name != None:
 
 				#add a check to verify that user has entered a value for primary key 
-				primary_key_col_index = self.table_obj.getAllColNames().index(primary_key_col_name)
+				# primary_key_col_index = self.table_obj.getAllColNames().index(primary_key_col_name)
 
-				if csv_array[primary_key_col_index] == "": 
-					print "FAILED: Primary Key attribute must have a non-empty value"
+				#add a check to verify that user has entered a value for primary key
+				result = self.passesPKNEConstraint(csv_array)
+
+				if result["return_code"] != "Pass":
+					print result["err_msg"]
 					return
 
-				all_rows_in_table = self.table_obj.getAllRows()
-				all_values_in_primary_key_col = map(lambda row_string: ParseCSVString2Array(row_string)[primary_key_col_index], all_rows_in_table)
-
-				if csv_array[primary_key_col_index] in all_values_in_primary_key_col:
-					print "A record with the same value for primary key exists"
-					table = PrettyTable(self.table_obj.getAllColNames())
-					exisiting_row_index = all_values_in_primary_key_col.index(csv_array[primary_key_col_index])
-					table.add_row(ParseCSVString2Array(all_rows_in_table[exisiting_row_index]))
-					print table
+				#verify that PK given doesn't exist in the table apriori
+				result = self.passesPKNDConstraint(csv_array)
+				if result["return_code"] != "Pass":
+					print result["err_msg"]
+					#instance of pretty table
+					print result["table"]
 					return
-				else:
-					#insert the record at appropriate position
-					insertion_index_for_new_record = bisect(all_values_in_primary_key_col, csv_array[primary_key_col_index])
-					
-					#inserting row in the in-memory image of records
-					#table takes care of the updating the index
-					self.table_obj.insertRowAt(csv_val_string, insertion_index_for_new_record)
-					print "Row added successfully"
+				# if csv_array[primary_key_col_index] == "": 
+					# print "FAILED: Primary Key attribute must have a non-empty value"
+					# return
 
-					#start the actual write to the file
+				# all_rows_in_table = self.table_obj.getAllRows()
+				# all_values_in_primary_key_col = map(lambda row_string: ParseCSVString2Array(row_string)[primary_key_col_index], all_rows_in_table)
+
+				# if csv_array[primary_key_col_index] in all_values_in_primary_key_col:
+				# 	print "A record with the same value for primary key exists"
+				# 	table = PrettyTable(self.table_obj.getAllColNames())
+				# 	exisiting_row_index = all_values_in_primary_key_col.index(csv_array[primary_key_col_index])
+				# 	table.add_row(ParseCSVString2Array(all_rows_in_table[exisiting_row_index]))
+				# 	print table
+				# 	return
+				# else:
+
+			result = self.passesUniqueConstraints(csv_array)
+			if result["return_code"] != "Pass": 
+				print result["err_msg"]
+				return
+
+			#insert the record at appropriate position
+			insertion_index_for_new_record = bisect(all_values_in_primary_key_col, csv_array[primary_key_col_index])
+			
+			#inserting row in the in-memory image of records
+			#table takes care of the updating the index
+			#writing to file taken care of in insertRowAt
+			self.table_obj.insertRowAt(csv_val_string, insertion_index_for_new_record)
+			print "Row added successfully"
+
+	def passesPKNEConstraint(self, csv_array):
+		return self.table_obj.passesPKNEConstraint(csv_array)
+	def passesPKNDConstraint(self, csv_array):
+		return self.table_obj.passesPKNDConstraint(csv_val_string)
+	def passesUniqueConstraints(self, csv_array):
+		return self.table_obj.passesUniqueConstraints(csv_array)
 
 class FindQuery:
 	
@@ -149,10 +318,15 @@ class FindQuery:
 		self.query_col_values = map(lambda query_col_value: removeDQuotes(query_col_value), self.query_col_values)
 
 
-		# print self.query_col_names
-		# print self.query_col_values
+
 	def execute(self):
 		
+		result = self.table_obj.validateColNames(self.query_col_names)
+		if not result["return_code"] == "pass":
+			print result["err_msg"]
+			return
+
+
 		#Remember every attribute has string value, so enclose the value in double quotes
 		indexed_columns_names_for_table = self.table_obj.getIndexedColumnsNames()
 
@@ -255,10 +429,28 @@ class FindQuery:
 		else: 
 			#no records to process
 			print "0 records found"
-		
+class ConstraintQuery:
+	def __init__(self, table_obj, col_name):
+		self.table_obj = table_obj
+		self.col_name = col_name
+	def execute(self):
+		result = self.table_obj.validateColNames([self.col_name])
+		if result["return_code"] == "pass":
+			self.table_obj.addUniqueOn(self.col_name)
+		else: 
+			print result["err_msg"]
 
+class PKQuery:
+	def __init__(self, table_obj, col_name):
+		self.table_obj = table_obj
+		self.col_name = col_name
+	def execute(self):
+		result = self.table_obj.validateColNames([col_name])
+		if result["return_code"] == "pass":
+			self.table_obj.setPrimaryKeyAs(self.col_name)
+		else:
+			print result["err_msg"]
 #Index here is a map from a col_value to the set of row indices that have the "col_value" under colname attribute	
-
 class Index: 
 	def __init__(self, colname, hashed_array, table_obj):
 		self.colname = colname
@@ -310,6 +502,7 @@ class Table:
 		self.indexed_columns_names = set()
 		self.filename = filename
 		self.primary_key_col_name = None
+		self.unique_constrained_col_names = []
 
 		#the file handle, Must be used within a function of table class
 		self.f = None
@@ -389,6 +582,8 @@ class Table:
 		# print hashed_index_on_col[key]
 		index_obj = Index(colname, hashed_index_on_col, self)
 		self.indices.append(index_obj)
+
+		print "Index for " + self.name + "." + colname + " built successfully"
 		
 		# print self.getIndexOn(colname).getArray()
 		# return index_on_col
@@ -415,8 +610,20 @@ class Table:
 		return self.all_col_names
 	def getAllRows(self):
 		return self.rows
+	def getColIndex(self, col_name):
+		all_col_names = self.getAllColNames()
+		if col_name in all_col_names:
+			return all_col_names.index(col_name)
+		else:
+			return "error"
 	def setPrimaryKeyAs(self, col_name):
-		self.primary_key_col_name = col_name
+		#PK is also unique constrained
+		if self.passesUniqueOn(col_name):
+			self.primary_key_col_name = col_name
+			self.buildIndex(col_name)
+			self.addUniqueOn(col_name)
+		else:
+			print "FAILED: Unique constraint must hold for PK"
 	def getPrimaryKeyCol(self):
 		return self.primary_key_col_name
 
@@ -425,7 +632,7 @@ class Table:
 		for index_obj in self.indices:
 
 			#find col_index to get the column value which serves as the key in the hashed array
-			col_index = self.getAllColNames().index(index_obj.getColName())
+			col_index = self.getColIndex(index_obj.getColName())
 			hash_key_col_value = ParseCSVString2Array(row_string)[col_index]
 			hash_val_row_index = row_index
 
@@ -460,8 +667,89 @@ class Table:
 		
 		self.f.writelines(nl_terminated_rows_in_strings)
 		# self.f_updated.close()
+
+	def getAllValuesForColumn(self, col_name):
+		#col_index = self.getAllColNames().index(col_name)
+		col_index = self.getColIndex(col_name)
+		all_col_values = map(lambda row_string: ParseCSVString2Array(row_string)[col_index], self.getAllRows())
+		return all_col_values
+
+	def passesPKNEConstraint(self, csv_array):
+
+		#primary_key_col_index = self.getAllColNames().index(self.primary_key_col_name)
+		primary_key_col_index = self.getColIndex(self.primary_key_col_name)
+		primary_key_col_value_in_query = csv_val_string[primary_key_col_index]
+
+		result = dict()
+		success = {"return_code": "Pass", "err_msg": "FAILED: Primary Key attribute must have a NON NULL value"}
+		failure = {"return_code": "Fail"}
+		result["return_code"] =  success if primary_key_col_value_in_query != "" else failure
+
+		return result
+	def passesPKNDConstraint(self, csv_array):
+		#primary_key_col_index = self.getAllColNames().index(self.primary_key_col_name)
 		
+		primary_key_col_index = self.getColIndex(self.primary_key_col_name)
+		primary_key_col_value_in_query = csv_val_string[primary_key_col_index]
+
+		all_col_values_for_pk = self.getAllValuesForColumn(self.primary_key_col_name)
+
+		result = dict()
+		if primary_key_col_value_in_query in all_col_values_for_pk:
+			table = PrettyTable(self.table_obj.getAllColNames())
+			table.add_row(csv_array)
+
+			result["return_code"] = "Fail"
+			result["err_msg"] = "FAILED: A record with the same value for primary key exists"
+			result["table"] = table
+		else: 
+			result["status_code"] = "Pass"
+		return result
+	def passesUniqueConstraints(self, csv_array):
+
+		success = {"return_code": "Pass"}
+
+		#unqiue constrained col_name
+		for uc_col_name in self.unique_constrained_col_names:
+			#uc_col_index = self.getAllColNames().index(uc_col_name)
+			uc_col_index = self.getColIndex(uc_col_name)
+			col_value_in_query = csv_array[uc_col_index]
+			if self.checkValueExistsFor(uc_col_name, col_value_in_query):
+				failure = dict()
+				failure["return_code"] = "Fail"
+				failure["err_msg"] = "FAILED: The given record violates UNIQUE on " + uc_col_name
+				return failure
+		return success
+
+	def checkValueExistsFor(self, col_name, col_value):
+		all_col_values = self.getAllValuesForColumn(col_name)
+
+		return col_value in all_col_values
+	def passesUniqueOn(self, col_name):
+
+		col_index = self.getAllColNames().index(col_name)
+		all_col_values = map(lambda row_string: ParseCSVString2Array(row_string)[col_index], self.getAllRows())
+
+		return len(all_col_values) == len(set(all_col_values))
+	def addUniqueOn(self, col_name):
+		if col_name in self.unique_constrained_col_names:
+			print "IGNORED: Constraint already applied"
+		#check if this column actually has unique values
+		elif not self.passesUniqueOn(col_name):
+			print "FAILED: Column has duplicate values"
+		else:
+			self.unique_constrained_col_names.append(col_name)
+			print "UNIQUE contraint applied to " + col_name
+	def validateColNames(self, col_names_list):
 		
+		for col_name in col_names_list:
+			if col_name not in self.getAllColNames():
+				failure = {"return_code": "error", "err_msg": "FAILED: " + col_name + " doesn't belong to " + self.name}
+				return failure
+
+		success = {"return_code": "pass"}
+		return success
+
 
 if __name__ == "__main__":
 	start()
