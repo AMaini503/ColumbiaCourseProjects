@@ -1,5 +1,6 @@
 import re
 from prettytable import PrettyTable
+from operator import itemgetter
 import csv
 from StringIO import StringIO
 from bisect import bisect
@@ -90,10 +91,10 @@ def start():
 			table_name = match_for_pk_query.group(1)
 			col_name = match_for_pk_query.group(2)
 
-			if gscope.tableExists(tname):
+			if gscope.tableExists(table_name):
 				return (q_type, table_name, col_name)
 			else:
-				print "Table " + tname + " doesn't exist"
+				print "Table " + table_name + " doesn't exist"
 				return "error"
 			
 		elif match_for_add_table_query:
@@ -282,7 +283,11 @@ class InsertQuery:
 				return
 
 			#insert the record at appropriate position
-			insertion_index_for_new_record = bisect(all_values_in_primary_key_col, csv_array[primary_key_col_index])
+			if primary_key_col_name != None:
+				all_values_in_primary_key_col = self.table_obj.getAllValuesForColumn(primary_key_col_name)
+				insertion_index_for_new_record = bisect(all_values_in_primary_key_col, csv_array[primary_key_col_index])
+			else:
+				insertion_index_for_new_record = len(self.table_obj.getAllRows())
 			
 			#inserting row in the in-memory image of records
 			#table takes care of the updating the index
@@ -445,7 +450,7 @@ class PKQuery:
 		self.table_obj = table_obj
 		self.col_name = col_name
 	def execute(self):
-		result = self.table_obj.validateColNames([col_name])
+		result = self.table_obj.validateColNames([self.col_name])
 		if result["return_code"] == "pass":
 			self.table_obj.setPrimaryKeyAs(self.col_name)
 		else:
@@ -549,44 +554,64 @@ class Table:
 		self.num_cols = len(self.all_col_names)
 		
 		# print self.allcols
+	def refreshAllIndices(self):
+		for i, index_obj in enumerate(self.indices):
+			self.indices[i] = self.refreshIndex(index_obj.getColName())
+	def refreshIndex(self, colname):
 
+		# index_of_col = self.all_col_names.index(colname)
+
+		# all_col_values = map(lambda row: row.split(",")[index_of_col], self.rows)
+		#remove double quotes before building hash
+		# all_col_values = map(lambda col_value: removeDQuotes(col_value), all_col_values)
+		
+		all_col_values = self.getAllValuesForColumn(colname)
+
+		hashed_index_on_col = dict()
+		for i,val in enumerate(all_col_values):
+			if val not in hashed_index_on_col:
+				
+				hashed_index_on_col[val] = set()
+				
+			hashed_index_on_col[val].add(i)
+		
+		index_obj = Index(colname, hashed_index_on_col, self)
+
+		print "Index for " + self.name + "." + colname + " refreshed successfully"
+		return index_obj
 	def buildIndex(self, colname):
 		
 		#add colname to the list of indexed columns
 		#self.indexed_columns.append(colname)
+
+		if colname in self.indexed_columns_names:	
+			print "IGNORED: Index for " + colname + " already exists"
+			return
+
 		self.indexed_columns_names.add(colname)
 
-		index_of_col = self.all_col_names.index(colname)
+		# col_index = self.getColIndex(colname)
 		# print index_of_col
 
-		all_col_values = map(lambda row: row.split(",")[index_of_col], self.rows)
+		# all_col_values = map(lambda row: row.split(",")[index_of_col], self.rows)
 		#remove double quotes before building hash
-		all_col_values = map(lambda col_value: removeDQuotes(col_value), all_col_values)
+		# all_col_values = map(lambda col_value: removeDQuotes(col_value), all_col_values)
+		all_col_values = self.getAllValuesForColumn(colname)
 
 		#check if the index needs to be primary o
-
-		# print all_col_values
-		# print len(all_col_values)
-		
 		hashed_index_on_col = dict()
 		for i,val in enumerate(all_col_values):
 			if val not in hashed_index_on_col:
-				# hashed_index_on_col[val] = []
+				
 				hashed_index_on_col[val] = set()
 				
-			# hashed_index_on_col[val].append(i)	
+			
 			hashed_index_on_col[val].add(i)
 		
-		# print hashed_index_on_col.keys()
-		
-		# print hashed_index_on_col[key]
 		index_obj = Index(colname, hashed_index_on_col, self)
 		self.indices.append(index_obj)
 
 		print "Index for " + self.name + "." + colname + " built successfully"
-		
-		# print self.getIndexOn(colname).getArray()
-		# return index_on_col
 
 	def getIndexOn(self, colname): 
 
@@ -620,7 +645,36 @@ class Table:
 		#PK is also unique constrained
 		if self.passesUniqueOn(col_name):
 			self.primary_key_col_name = col_name
+
+			#sort the rows according to primary key before building the index
+			self.rows_as_lol = map(lambda row_string: ParseCSVString2Array(row_string) + [row_string], self.rows_in_strings)
+
+			#sort the rows by pk
+			self.rows_as_lol = sorted(self.rows_as_lol, key=itemgetter(self.getColIndex(self.primary_key_col_name)))
+
+			#getting back the re-arranged rows
+			self.rows_in_strings = self.rows = map(lambda row_as_lol: row_as_lol[-1], self.rows_as_lol)
+
+			#refresh indices to use the new row indices
+			self.refreshAllIndices()
+
+
 			self.buildIndex(col_name)
+
+			#writing re-arranged rows & header_line to file
+			nl_terminated_rows_in_strings = map(lambda row_string: row_string + "\n", self.rows_in_strings)
+			nl_terminated_rows_in_strings = [self.header_line + "\n"] + nl_terminated_rows_in_strings
+			
+			self.f.seek(0)
+			self.f.truncate()
+			self.f.writelines(nl_terminated_rows_in_strings)
+			self.f.flush()
+			os.fsync(self.f.fileno())
+
+			#needs update because lines have rearranged
+			self.line_lengths = [len(line) for line in nl_terminated_rows_in_strings]
+			
+			#this will obviously pass
 			self.addUniqueOn(col_name)
 		else:
 			print "FAILED: Unique constraint must hold for PK"
@@ -645,6 +699,7 @@ class Table:
 	#row_string has been stripped of newline character
 	def insertRowAt(self, row_string, row_index):
 		self.rows.insert(row_index, row_string)
+		# print row_string
 		self.updateIndicesWith(row_string, row_index)
 		self.writeRowsToFile(row_index)
 		
@@ -655,17 +710,19 @@ class Table:
 	def writeRowsToFile(self, new_row_index):
 		
 		#by default rows don't have newline characters at the end, so it is added at the end of each line
-		nl_terminated_rows_in_strings = map(lambda row_string: row_string if row_string[-1] == "\n" else row_string + "\n", self.rows_in_strings[new_row_index:])
+		nl_terminated_rows_in_strings = map(lambda row_string: row_string if row_string[-1] == "\n" else row_string + "\n", self.rows[new_row_index:])
 		
 		#seek to the desired byte location
 		offset = sum(self.line_lengths[0:new_row_index + 1])
-		# print offset
 		# print self.line_leng	ths[0:new_row_index + 1]
 		self.f.seek(offset)
 		self.f.truncate()
 		# self.f_updated.truncate(offset)
 		
+		# print nl_terminated_rows_in_strings
 		self.f.writelines(nl_terminated_rows_in_strings)
+		self.f.flush()
+		os.fsync(self.f.fileno())
 		# self.f_updated.close()
 
 	def getAllValuesForColumn(self, col_name):
@@ -678,7 +735,7 @@ class Table:
 
 		#primary_key_col_index = self.getAllColNames().index(self.primary_key_col_name)
 		primary_key_col_index = self.getColIndex(self.primary_key_col_name)
-		primary_key_col_value_in_query = csv_val_string[primary_key_col_index]
+		primary_key_col_value_in_query = csv_val_string[self.primary_key_col_index]
 
 		result = dict()
 		success = {"return_code": "Pass", "err_msg": "FAILED: Primary Key attribute must have a NON NULL value"}
