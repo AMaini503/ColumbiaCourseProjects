@@ -5,7 +5,8 @@ import csv
 from StringIO import StringIO
 from bisect import bisect
 import sys, os
-
+from mysql.connector import MySQLConnection, Error
+import mysql.connector
 
 class GlobalScope:
 	def __init__(self):
@@ -28,148 +29,134 @@ class GlobalScope:
 	def tableExists(self, tname): 
 		return tname in self.map_tname_to_obj
 
-# def GetQueryObj(raw_query_text):
-# 	raw_query_text = raw_query_text.strip()
+def ParseQuery(raw_query_text):
+	pattern_for_DM_queries = re.compile(r"(find|insert)\s+([A-Za-z0-9]+)\s+(.*)", re.I)
+	match_for_DM_queries = pattern_for_DM_queries.match(raw_query_text)
 
-# 	parts = raw_query_text.split(" ")
-# 	q_type = ""
-# 	if parts[0].lower() == "find" : 
-# 		obj = FindQuery(raw_query_text)
-# 		q_type = "find"
-# 	elif parts[0].lower() == "insert":
-# 		obj = InsertQuery(raw_query_text)
-# 		q_type = "insert"
+	pattern_for_constraint_query = re.compile(r"apply\s+unique\s+to\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
+	match_for_constraint_query = pattern_for_constraint_query.match(raw_query_text)
 
-# 	return (q_type, obj)
+	pattern_for_pk_query = re.compile(r"set\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)\s+as\s+pk")
+	match_for_pk_query = pattern_for_pk_query.match(raw_query_text)
+
+	pattern_for_add_table_query = re.compile(r"add\s+table\s+for\s+(.+)")
+	match_for_add_table_query = pattern_for_add_table_query.match(raw_query_text)
+
+	pattern_for_aio_query = re.compile(r"build\s+index\s+on\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
+	match_for_aio_query = pattern_for_aio_query.match(raw_query_text)
+
+	if match_for_DM_queries:
+		q_type = match_for_DM_queries.group(1)
+		tname = match_for_DM_queries.group(2)
+		aux_info = match_for_DM_queries.group(3)
+
+		#check for existence of table
+		if gscope.tableExists(tname):
+			return (q_type.lower(), tname.lower(), aux_info)
+		else:
+			print "Table " + tname + " doesn't exist"
+			return "error"
+	elif match_for_constraint_query: 
+		table_name = match_for_constraint_query.group(1)
+		col_name = match_for_constraint_query.group(2)
+
+		q_type = "unique constraint"
+		tname = table_name
+		aux_info = col_name
+
+		if gscope.tableExists(tname):
+			return (q_type, tname, aux_info)
+		else:
+			print "Table " + tname + " doesn't exist"
+			return "error"
+
+	elif match_for_pk_query:
+		q_type = "pk"
+		table_name = match_for_pk_query.group(1)
+		col_name = match_for_pk_query.group(2)
+
+		if gscope.tableExists(table_name):
+			return (q_type, table_name, col_name)
+		else:
+			print "Table " + table_name + " doesn't exist"
+			return "error"
+		
+	elif match_for_add_table_query:
+		q_type = "add table"
+		aux_info = match_for_add_table_query.group(1)
+		return (q_type, None, aux_info)
+	elif match_for_aio_query:
+		q_type = "build index"
+		table_name = match_for_aio_query.group(1)
+		col_name = match_for_aio_query.group(2)
+
+		if gscope.tableExists(table_name):
+			return (q_type, table_name, col_name)
+		else:
+			print "Table " + table_name + " doesn't exist"
+			return "error"
+
+	elif raw_query_text.lower().strip() == "show tables":
+		q_type = "show tables"
+		return (q_type, None, None)
+	else:
+		return "Invalid Query"
+
+def HandleQuery(raw_query_text):
+	result = ParseQuery(raw_query_text)
+	
+	if result == "Invalid Query":
+		print result
+	else :
+
+		if result == "error": 
+			return
+
+		q_type = result[0]
+		tname = result[1]
+		aux_info = result[2]
+		
+		if q_type == "find":
+			table_obj = gscope.getTObjFor(tname)
+			find_query_obj = FindQuery(table_obj, aux_info)
+			result = find_query_obj.execute()
+			return result
+		elif q_type  == "insert":
+			table_obj = gscope.getTObjFor(tname)
+			insert_query_obj = InsertQuery(table_obj, aux_info)
+			return_val = insert_query_obj.execute()
+			return return_val
+		elif q_type == "unique constraint": #handle unique here
+			table_name = tname
+			uc_col_name = aux_info
+			unique_constraint_query = ConstraintQuery(gscope.getTObjFor(table_name), uc_col_name)
+			unique_constraint_query.execute()
+		elif q_type == "pk":
+			table_name = tname
+			pk_col_name = aux_info
+			pk_query = PKQuery(gscope.getTObjFor(table_name), pk_col_name)
+			pk_query.execute()
+		elif q_type == "show tables": 
+			table = PrettyTable(["Table name"])
+			map(lambda tname: table.add_row([tname]), gscope.getAllTNames())
+			print table
+		elif q_type == "add table": 
+			table_file_name = aux_info
+			addtff_query = AddTFFQuery(table_file_name)
+			addtff_query.execute()
+		elif q_type == "build index":
+			table_name = tname
+			col_name = aux_info
+
+			if gscope.tableExists(table_name): 
+				aio_query = BuildIndexOnQuery(gscope.getTObjFor(table_name), col_name)
+				aio_query.execute()
+
 
 
 def start(): 
 
-	def ParseQuery():
-		pattern_for_DM_queries = re.compile(r"(find|insert)\s+([A-Za-z0-9]+)\s+(.*)", re.I)
-		match_for_DM_queries = pattern_for_DM_queries.match(raw_query_text)
-
-		pattern_for_constraint_query = re.compile(r"apply\s+unique\s+to\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
-		match_for_constraint_query = pattern_for_constraint_query.match(raw_query_text)
-
-		pattern_for_pk_query = re.compile(r"set\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)\s+as\s+pk")
-		match_for_pk_query = pattern_for_pk_query.match(raw_query_text)
-
-		pattern_for_add_table_query = re.compile(r"add\s+table\s+for\s+(.+)")
-		match_for_add_table_query = pattern_for_add_table_query.match(raw_query_text)
-
-		pattern_for_aio_query = re.compile(r"build\s+index\s+on\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
-		match_for_aio_query = pattern_for_aio_query.match(raw_query_text)
-
-		if match_for_DM_queries:
-			q_type = match_for_DM_queries.group(1)
-			tname = match_for_DM_queries.group(2)
-			aux_info = match_for_DM_queries.group(3)
-
-			#check for existence of table
-			if gscope.tableExists(tname):
-				return (q_type.lower(), tname.lower(), aux_info)
-			else:
-				print "Table " + tname + " doesn't exist"
-				return "error"
-		elif match_for_constraint_query: 
-			table_name = match_for_constraint_query.group(1)
-			col_name = match_for_constraint_query.group(2)
-
-			q_type = "unique constraint"
-			tname = table_name
-			aux_info = col_name
-
-			if gscope.tableExists(tname):
-				return (q_type, tname, aux_info)
-			else:
-				print "Table " + tname + " doesn't exist"
-				return "error"
-
-		elif match_for_pk_query:
-			q_type = "pk"
-			table_name = match_for_pk_query.group(1)
-			col_name = match_for_pk_query.group(2)
-
-			if gscope.tableExists(table_name):
-				return (q_type, table_name, col_name)
-			else:
-				print "Table " + table_name + " doesn't exist"
-				return "error"
-			
-		elif match_for_add_table_query:
-			q_type = "add table"
-			aux_info = match_for_add_table_query.group(1)
-			return (q_type, None, aux_info)
-		elif match_for_aio_query:
-			q_type = "build index"
-			table_name = match_for_aio_query.group(1)
-			col_name = match_for_aio_query.group(2)
-
-			if gscope.tableExists(table_name):
-				return (q_type, table_name, col_name)
-			else:
-				print "Table " + table_name + " doesn't exist"
-				return "error"
-
-		elif raw_query_text.lower().strip() == "show tables":
-			q_type = "show tables"
-			return (q_type, None, None)
-		else:
-			return "Invalid Query"
-
-	def HandleQuery(raw_query_text):
-		result = ParseQuery()
-		
-		if result == "Invalid Query":
-			print result
-		else :
-
-			if result == "error": 
-				return
-
-			q_type = result[0]
-			tname = result[1]
-			aux_info = result[2]
-			
-			if q_type == "find":
-				table_obj = gscope.getTObjFor(tname)
-				find_query_obj = FindQuery(table_obj, aux_info)
-				find_query_obj.execute()
-			elif q_type  == "insert":
-				table_obj = gscope.getTObjFor(tname)
-				insert_query_obj = InsertQuery(table_obj, aux_info)
-				insert_query_obj.execute()
-			elif q_type == "unique constraint": #handle unique here
-				table_name = tname
-				uc_col_name = aux_info
-				unique_constraint_query = ConstraintQuery(gscope.getTObjFor(table_name), uc_col_name)
-				unique_constraint_query.execute()
-			elif q_type == "pk":
-				table_name = tname
-				pk_col_name = aux_info
-				pk_query = PKQuery(gscope.getTObjFor(table_name), pk_col_name)
-				pk_query.execute()
-			elif q_type == "show tables": 
-				table = PrettyTable(["Table name"])
-				map(lambda tname: table.add_row([tname]), gscope.getAllTNames())
-				print table
-			elif q_type == "add table": 
-				table_file_name = aux_info
-				addtff_query = AddTFFQuery(table_file_name)
-				addtff_query.execute()
-			elif q_type == "build index":
-				table_name = tname
-				col_name = aux_info
-
-				if gscope.tableExists(table_name): 
-					aio_query = BuildIndexOnQuery(gscope.getTObjFor(table_name), col_name)
-					aio_query.execute()
-
-
-	global gscope
-	gscope = GlobalScope()
-
+	
 	#first add tables from the command line
 	for table_file_name  in sys.argv[1:]:
 		addtff_query = AddTFFQuery(table_file_name)
@@ -239,7 +226,7 @@ class InsertQuery:
 		#1st check is to validate whether user entered a value for all the columns
 		if num_values_in_query < num_cols_in_table:
 			print "FAILED: #values < #columns"
-			return
+			return "Fail"
 		else:
 			primary_key_col_name = self.table_obj.getPrimaryKeyCol()
 			if primary_key_col_name != None:
@@ -252,7 +239,7 @@ class InsertQuery:
 
 				if result["return_code"] != "Pass":
 					print result["err_msg"]
-					return
+					return "Fail"
 
 				#verify that PK given doesn't exist in the table apriori
 				result = self.passesPKNDConstraint(csv_array)
@@ -260,7 +247,7 @@ class InsertQuery:
 					print result["err_msg"]
 					#instance of pretty table
 					print result["table"]
-					return
+					return "Fail"
 				# if csv_array[primary_key_col_index] == "": 
 					# print "FAILED: Primary Key attribute must have a non-empty value"
 					# return
@@ -280,7 +267,7 @@ class InsertQuery:
 			result = self.passesUniqueConstraints(csv_array)
 			if result["return_code"] != "Pass": 
 				print result["err_msg"]
-				return
+				return "Fail"
 
 			#insert the record at appropriate position
 			if primary_key_col_name != None:
@@ -294,6 +281,7 @@ class InsertQuery:
 			#writing to file taken care of in insertRowAt
 			self.table_obj.insertRowAt(csv_val_string, insertion_index_for_new_record)
 			print "Row added successfully"
+			return "Pass"
 
 	def passesPKNEConstraint(self, csv_array):
 		return self.table_obj.passesPKNEConstraint(csv_array)
@@ -312,7 +300,7 @@ class FindQuery:
 	def ParseAuxInfo(self): 
 		#kv_pairs_list = self.aux_info.split(",")
 		kv_pairs_list = ParseCSVString2Array(self.aux_info)
-		# print kv_pairs_list
+		print kv_pairs_list
 
 		self.query_col_names = map(lambda pair_string: pair_string.split("=")[0].strip(), kv_pairs_list)
 		#removing double quotes if any
@@ -431,9 +419,14 @@ class FindQuery:
 				for row_string in records_in_final_result:
 					table.add_row(ParseCSVString2Array(row_string))
 				print table
+
+				return records_in_final_result
+			else: 
+				return []
 		else: 
 			#no records to process
 			print "0 records found"
+			return []
 class ConstraintQuery:
 	def __init__(self, table_obj, col_name):
 		self.table_obj = table_obj
@@ -807,6 +800,123 @@ class Table:
 		success = {"return_code": "pass"}
 		return success
 
+def test_find():
+	def init():
+		conn = mysql.connector.connect(host='localhost',
+                                       database='hw1',
+                                       user='root',
+                                       password='password')
+
+		return (conn, conn.cursor())
+	def executeSQLSelectQuery(cursor, query):
+		try: 
+			cursor.execute(query)
+			rows = cursor.fetchall()
+			#list of tuples
+			return rows
+		except Error as e:
+			print(e)
+	def executeSQLInsertQuery(conn, cursor, query):
+		try: 
+			cursor.execute(query)
+			conn.commit()
+			return "Pass"
+		except Error as e:
+			print (e)
+			return "Fail"
+	def equivalent(result_from_prog, result_from_sql):
+		if len(result_from_prog) != len(result_from_sql):
+			print "Different number of records produced"
+			return False
+
+		#Both have zero number of records, tis a valid equivalence
+		if len(result_from_prog) == 0:
+			return True
+
+		#CustomerID can act as a sort key
+		sorted_result_from_prog = sorted(result_from_prog, key=itemgetter(0))
+		sorted_result_from_sql = sorted(result_from_sql, key=itemgetter(0))
+
+
+		#element to element correspondence check
+		equality_checks = map(lambda (i,rp): tuple(map(lambda x: str(x), rp)) == tuple(map(lambda x: str(x), sorted_result_from_sql[i])), enumerate(sorted_result_from_prog))
+		failed_checks = filter(lambda (i, check_val): check_val == False, enumerate(equality_checks))
+
+		if len(failed_checks) > 0:
+			print "Records that disagree are: "
+			print failed_checks
+			print "Disagreements on: "
+			for (row_index, eval_val) in failed_checks:
+				inconsistent_cols = filter( lambda (col_index, col_val): sorted_result_from_prog[row_index][col_index] != sorted_result_from_sql[row_index][col_index], enumerate(sorted_result_from_prog))
+				inconsistent_cols = [x[0] for x in inconsistent_cols]
+				print [sorted_result_from_prog[i] for i in inconsistent_cols]
+				print [sorted_result_from_sql[i] for  i in inconsistent_cols]
+			return False
+		return True
+	######################################################
+
+	HandleQuery("add table for customers.csv")
+	HandleQuery("add table for orders.csv")
+
+	(conn, cursor) = init()
+	queries_file_name = sys.argv[2]
+	
+	f = open(queries_file_name, "r")
+
+	lines = f.readlines()
+
+	#remove newline characters at the end
+	lines = map(lambda line: line.strip(), lines)
+	
+
+	#remove any empty lines
+	# lines = filter(lambda line: line != "", lines)
+	
+	count = len(lines)/2
+
+	ind_query_for_prog = 0
+	ind_query_for_sql = 1
+	
+	while(count > 0):
+		query_for_prog = lines[ind_query_for_prog]
+		query_for_sql = lines[ind_query_for_sql]
+
+		
+		q_type = query_for_prog.split(" ")[0]
+		if q_type == "find":
+
+			result_from_prog_in_strings = HandleQuery(query_for_prog)
+			result_from_prog = map(lambda row_string: ParseCSVString2Array(row_string), result_from_prog_in_strings)
+
+
+			result_from_sql = executeSQLSelectQuery(cursor, query_for_sql)
+
+			if not equivalent(result_from_prog, result_from_sql):
+				print "Different results for: "
+				print query_for_prog
+				print query_for_sql
+				return
+		elif q_type == "insert":
+			return_val_prog = HandleQuery(query_for_prog)
+			return_val_sql = executeSQLInsertQuery(conn, cursor, query_for_sql)
+
+			if return_val_prog != return_val_sql:
+				print "Different return values for insertions: "
+				print query_for_prog
+				print query_for_sql
+				return
+
+		count = count - 1
+		ind_query_for_prog = ind_query_for_prog + 2
+		ind_query_for_sql = ind_query_for_sql + 2
+
 
 if __name__ == "__main__":
-	start()
+
+	global gscope
+	gscope = GlobalScope()
+
+	if sys.argv[1] == "testfind":
+		test_find()
+	else:
+		start()
