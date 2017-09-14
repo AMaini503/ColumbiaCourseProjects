@@ -300,7 +300,7 @@ class FindQuery:
 	def ParseAuxInfo(self): 
 		#kv_pairs_list = self.aux_info.split(",")
 		kv_pairs_list = ParseCSVString2Array(self.aux_info)
-		print kv_pairs_list
+		# print kv_pairs_list
 
 		self.query_col_names = map(lambda pair_string: pair_string.split("=")[0].strip(), kv_pairs_list)
 		#removing double quotes if any
