@@ -45,6 +45,7 @@ def ParseQuery(raw_query_text):
 	pattern_for_aio_query = re.compile(r"build\s+index\s+on\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
 	match_for_aio_query = pattern_for_aio_query.match(raw_query_text)
 
+
 	if match_for_DM_queries:
 		q_type = match_for_DM_queries.group(1)
 		tname = match_for_DM_queries.group(2)
@@ -800,7 +801,7 @@ class Table:
 		success = {"return_code": "pass"}
 		return success
 
-def test_find():
+def test():
 	def init():
 		conn = mysql.connector.connect(host='localhost',
                                        database='hw1',
@@ -916,7 +917,7 @@ if __name__ == "__main__":
 	global gscope
 	gscope = GlobalScope()
 
-	if sys.argv[1] == "testfind":
-		test_find()
+	if sys.argv[1] == "test":
+		test()
 	else:
 		start()
