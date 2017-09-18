@@ -7,10 +7,12 @@ from bisect import bisect
 import sys, os
 from mysql.connector import MySQLConnection, Error
 import mysql.connector
+import timeit
 
 class GlobalScope:
 	def __init__(self):
 		self.map_tname_to_obj = dict()
+		self.timed = False
 	def getAllTNames(self):
 		return self.map_tname_to_obj.keys()
 	def getTObjFor(self, tname):
@@ -28,6 +30,10 @@ class GlobalScope:
 
 	def tableExists(self, tname): 
 		return tname in self.map_tname_to_obj
+	def setTimed(self):
+		self.timed = True
+	def isTimed(self):
+		return self.timed
 
 def ParseQuery(raw_query_text):
 	pattern_for_DM_queries = re.compile(r"(find|insert)\s+([A-Za-z0-9]+)\s+(.*)", re.I)
@@ -45,6 +51,8 @@ def ParseQuery(raw_query_text):
 	pattern_for_aio_query = re.compile(r"build\s+index\s+on\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
 	match_for_aio_query = pattern_for_aio_query.match(raw_query_text)
 
+	pattern_for_nn_query = re.compile(r"apply\s+not\s+null\s+to\s+([A-Za-z0-9]+)\.([A-Za-z0-9]+)")
+	match_for_nn_query = pattern_for_nn_query.match(raw_query_text)
 
 	if match_for_DM_queries:
 		q_type = match_for_DM_queries.group(1)
@@ -96,7 +104,16 @@ def ParseQuery(raw_query_text):
 		else:
 			print "Table " + table_name + " doesn't exist"
 			return "error"
+	elif match_for_nn_query:
+		q_type = "not null"
+		table_name = match_for_nn_query.group(1)
+		col_name = match_for_nn_query.group(2)
 
+		if gscope.tableExists(table_name):
+			return (q_type, table_name, col_name)
+		else:
+			print "Table " + table_name + " doesn't exist"
+			return "error"
 	elif raw_query_text.lower().strip() == "show tables":
 		q_type = "show tables"
 		return (q_type, None, None)
@@ -148,10 +165,15 @@ def HandleQuery(raw_query_text):
 		elif q_type == "build index":
 			table_name = tname
 			col_name = aux_info
+ 
+			aio_query = BuildIndexOnQuery(gscope.getTObjFor(table_name), col_name)
+			aio_query.execute()
+		elif q_type == "not null":
+			table_name = tname
+			col_name = aux_info
 
-			if gscope.tableExists(table_name): 
-				aio_query = BuildIndexOnQuery(gscope.getTObjFor(table_name), col_name)
-				aio_query.execute()
+			nn_query = NNQuery(gscope.getTObjFor(table_name), col_name)
+			nn_query.execute()
 
 
 
@@ -159,7 +181,7 @@ def start():
 
 	
 	#first add tables from the command line
-	for table_file_name  in sys.argv[1:]:
+	for table_file_name  in set(sys.argv[1:]) - set(["timeit"]):
 		addtff_query = AddTFFQuery(table_file_name)
 		addtff_query.execute()
 
@@ -186,6 +208,19 @@ def start():
 			sig_exit = True
 		else:
 			HandleQuery(raw_query_text)
+
+#Not NULL query
+class NNQuery:
+	def __init__(self, table_obj, col_name):
+		self.table_obj = table_obj
+		self.col_name = col_name
+	def execute(self):
+		result = self.table_obj.validateColNames([self.col_name])
+		if result["return_code"] == "pass":
+			self.table_obj.addNNOn(self.col_name)
+		else: 
+			print result["err_msg"]
+
 # add table for file
 class AddTFFQuery:
 	def __init__(self, table_file_name):
@@ -217,6 +252,9 @@ class InsertQuery:
 	
 	def execute(self):
 
+		#used for timing the query
+		start = timeit.default_timer()
+
 		#remove the round brackets from the end
 		csv_val_string = self.aux_info[1:-1]
 
@@ -225,8 +263,8 @@ class InsertQuery:
 		num_cols_in_table = len(self.table_obj.getAllColNames())
 
 		#1st check is to validate whether user entered a value for all the columns
-		if num_values_in_query < num_cols_in_table:
-			print "FAILED: #values < #columns"
+		if num_values_in_query != num_cols_in_table:
+			print "FAILED: #values != #columns"
 			return "Fail"
 		else:
 			primary_key_col_name = self.table_obj.getPrimaryKeyCol()
@@ -265,6 +303,11 @@ class InsertQuery:
 				# 	return
 				# else:
 
+			result = self.passesNNConstraints(csv_array)
+			if result["return_code"] != "Pass": 
+				print result["err_msg"]
+				return "Fail"
+
 			result = self.passesUniqueConstraints(csv_array)
 			if result["return_code"] != "Pass": 
 				print result["err_msg"]
@@ -273,6 +316,7 @@ class InsertQuery:
 			#insert the record at appropriate position
 			if primary_key_col_name != None:
 				all_values_in_primary_key_col = self.table_obj.getAllValuesForColumn(primary_key_col_name)
+				primary_key_col_index = self.table_obj.getColIndex(primary_key_col_name)
 				insertion_index_for_new_record = bisect(all_values_in_primary_key_col, csv_array[primary_key_col_index])
 			else:
 				insertion_index_for_new_record = len(self.table_obj.getAllRows())
@@ -282,15 +326,18 @@ class InsertQuery:
 			#writing to file taken care of in insertRowAt
 			self.table_obj.insertRowAt(csv_val_string, insertion_index_for_new_record)
 			print "Row added successfully"
+			if gscope.isTimed():
+				print "Took " + str(timeit.default_timer() - start)
 			return "Pass"
 
 	def passesPKNEConstraint(self, csv_array):
 		return self.table_obj.passesPKNEConstraint(csv_array)
 	def passesPKNDConstraint(self, csv_array):
-		return self.table_obj.passesPKNDConstraint(csv_val_string)
+		return self.table_obj.passesPKNDConstraint(csv_array)
 	def passesUniqueConstraints(self, csv_array):
 		return self.table_obj.passesUniqueConstraints(csv_array)
-
+	def passesNNConstraints(self, csv_array):
+		return self.table_obj.passesNNConstraints(csv_array)
 class FindQuery:
 	
 	def __init__(self, table_obj, aux_info):
@@ -315,6 +362,8 @@ class FindQuery:
 
 	def execute(self):
 		
+		start = timeit.default_timer()
+
 		result = self.table_obj.validateColNames(self.query_col_names)
 		if not result["return_code"] == "pass":
 			print result["err_msg"]
@@ -412,7 +461,10 @@ class FindQuery:
 			sorted_final_list_of_indices.sort()
 
 			num_records_in_result = len(final_set_of_indices)
-			print str(num_records_in_result) + " records found"
+			print str(num_records_in_result) + " record(s) found"
+
+			if gscope.isTimed():
+				print "Took " + str(timeit.default_timer() - start)
 
 			if num_records_in_result > 0:
 				records_in_final_result = self.table_obj.getRowsIndexedBy(sorted_final_list_of_indices)
@@ -502,6 +554,7 @@ class Table:
 		self.filename = filename
 		self.primary_key_col_name = None
 		self.unique_constrained_col_names = []
+		self.nn_constrained_col_names = []
 
 		#the file handle, Must be used within a function of table class
 		self.f = None
@@ -636,42 +689,50 @@ class Table:
 		else:
 			return "error"
 	def setPrimaryKeyAs(self, col_name):
-		#PK is also unique constrained
-		if self.passesUniqueOn(col_name):
-			self.primary_key_col_name = col_name
-
-			#sort the rows according to primary key before building the index
-			self.rows_as_lol = map(lambda row_string: ParseCSVString2Array(row_string) + [row_string], self.rows_in_strings)
-
-			#sort the rows by pk
-			self.rows_as_lol = sorted(self.rows_as_lol, key=itemgetter(self.getColIndex(self.primary_key_col_name)))
-
-			#getting back the re-arranged rows
-			self.rows_in_strings = self.rows = map(lambda row_as_lol: row_as_lol[-1], self.rows_as_lol)
-
-			#refresh indices to use the new row indices
-			self.refreshAllIndices()
-
-
-			self.buildIndex(col_name)
-
-			#writing re-arranged rows & header_line to file
-			nl_terminated_rows_in_strings = map(lambda row_string: row_string + "\n", self.rows_in_strings)
-			nl_terminated_rows_in_strings = [self.header_line + "\n"] + nl_terminated_rows_in_strings
-			
-			self.f.seek(0)
-			self.f.truncate()
-			self.f.writelines(nl_terminated_rows_in_strings)
-			self.f.flush()
-			os.fsync(self.f.fileno())
-
-			#needs update because lines have rearranged
-			self.line_lengths = [len(line) for line in nl_terminated_rows_in_strings]
-			
-			#this will obviously pass
-			self.addUniqueOn(col_name)
-		else:
+		#PK is unique constrained
+		if not self.passesUniqueOn(col_name):
 			print "FAILED: Unique constraint must hold for PK"
+			return
+		if not self.passesNNOn(col_name):
+			print "FAILED: NOT NULL constraint must hold for PK"
+			return
+
+		self.primary_key_col_name = col_name
+
+		#sort the rows according to primary key before building the index
+		self.rows_as_lol = map(lambda row_string: ParseCSVString2Array(row_string) + [row_string], self.rows_in_strings)
+
+		#sort the rows by pk
+		self.rows_as_lol = sorted(self.rows_as_lol, key=itemgetter(self.getColIndex(self.primary_key_col_name)))
+
+		#getting back the re-arranged rows
+		self.rows_in_strings = self.rows = map(lambda row_as_lol: row_as_lol[-1], self.rows_as_lol)
+
+		#refresh indices to use the new row indices
+		self.refreshAllIndices()
+
+
+		self.buildIndex(col_name)
+
+		#writing re-arranged rows & header_line to file
+		nl_terminated_rows_in_strings = map(lambda row_string: row_string + "\n", self.rows_in_strings)
+		nl_terminated_rows_in_strings = [self.header_line + "\n"] + nl_terminated_rows_in_strings
+		
+		self.f.seek(0)
+		self.f.truncate()
+		self.f.writelines(nl_terminated_rows_in_strings)
+		self.f.flush()
+		os.fsync(self.f.fileno())
+
+		#needs update because lines have rearranged
+		self.line_lengths = [len(line) for line in nl_terminated_rows_in_strings]
+		
+		#this will obviously pass
+		self.addUniqueOn(col_name)
+
+		self.addNNOn(col_name)
+
+			
 	def getPrimaryKeyCol(self):
 		return self.primary_key_col_name
 
@@ -725,23 +786,24 @@ class Table:
 		all_col_values = map(lambda row_string: ParseCSVString2Array(row_string)[col_index], self.getAllRows())
 		return all_col_values
 
+	#not empty
 	def passesPKNEConstraint(self, csv_array):
 
 		#primary_key_col_index = self.getAllColNames().index(self.primary_key_col_name)
 		primary_key_col_index = self.getColIndex(self.primary_key_col_name)
-		primary_key_col_value_in_query = csv_val_string[self.primary_key_col_index]
+		primary_key_col_value_in_query = csv_array[primary_key_col_index]
 
 		result = dict()
-		success = {"return_code": "Pass", "err_msg": "FAILED: Primary Key attribute must have a NON NULL value"}
-		failure = {"return_code": "Fail"}
-		result["return_code"] =  success if primary_key_col_value_in_query != "" else failure
+		success = {"return_code": "Pass"}
+		failure = {"return_code": "Fail", "err_msg": "FAILED: Primary Key attribute must have a NON NULL value"}
+		result =  success if primary_key_col_value_in_query != "" else failure
 
 		return result
 	def passesPKNDConstraint(self, csv_array):
 		#primary_key_col_index = self.getAllColNames().index(self.primary_key_col_name)
 		
 		primary_key_col_index = self.getColIndex(self.primary_key_col_name)
-		primary_key_col_value_in_query = csv_val_string[primary_key_col_index]
+		primary_key_col_value_in_query = csv_array[primary_key_col_index]
 
 		all_col_values_for_pk = self.getAllValuesForColumn(self.primary_key_col_name)
 
@@ -754,7 +816,7 @@ class Table:
 			result["err_msg"] = "FAILED: A record with the same value for primary key exists"
 			result["table"] = table
 		else: 
-			result["status_code"] = "Pass"
+			result["return_code"] = "Pass"
 		return result
 	def passesUniqueConstraints(self, csv_array):
 
@@ -771,26 +833,57 @@ class Table:
 				failure["err_msg"] = "FAILED: The given record violates UNIQUE on " + uc_col_name
 				return failure
 		return success
+	def passesNNConstraints(self, csv_array):
+		success = {"return_code": "Pass"}
 
+		for nn_col_name in self.nn_constrained_col_names:
+
+			nn_col_index = self.getColIndex(nn_col_name)
+			col_value_in_query = csv_array[nn_col_index]
+			if col_value_in_query == "":
+				failure = dict()
+				failure["return_code"] = "Fail"
+				failure["err_msg"] = "FAILED: The given record violates NOT NULL on " + nn_col_name
+				return failure
+		return success
 	def checkValueExistsFor(self, col_name, col_value):
 		all_col_values = self.getAllValuesForColumn(col_name)
 
 		return col_value in all_col_values
+	def passesNNOn(self, col_name):
+		col_index = self.getAllColNames().index(col_name)
+		all_col_values = self.getAllValuesForColumn(col_name)
+
+		empty_col_values = filter(lambda col_value: col_value == "", all_col_values)
+		return len(empty_col_values) == 0
 	def passesUniqueOn(self, col_name):
 
 		col_index = self.getAllColNames().index(col_name)
-		all_col_values = map(lambda row_string: ParseCSVString2Array(row_string)[col_index], self.getAllRows())
+		# all_col_values = map(lambda row_string: ParseCSVString2Array(row_string)[col_index], self.getAllRows())
+		all_col_values = self.getAllValuesForColumn(col_name)
 
-		return len(all_col_values) == len(set(all_col_values))
+		#unique column must not be null
+		return len(all_col_values) == len(set(all_col_values)) and self.passesNNOn(col_name)
 	def addUniqueOn(self, col_name):
 		if col_name in self.unique_constrained_col_names:
-			print "IGNORED: Constraint already applied"
+			print "IGNORED: Unique Constraint already applied"
 		#check if this column actually has unique values
 		elif not self.passesUniqueOn(col_name):
-			print "FAILED: Column has duplicate values"
+			print "FAILED: Column has duplicate values for existing rows"
 		else:
 			self.unique_constrained_col_names.append(col_name)
-			print "UNIQUE contraint applied to " + col_name
+			self.addNNOn(col_name)
+			print "UNIQUE constraint applied to " + col_name
+
+	def addNNOn(self, col_name):
+		if col_name in self.nn_constrained_col_names:
+			print "IGNORED: NN Constraint already applied"
+		elif not self.passesNNOn(col_name):
+			print "FAILED: Column has NULL values for existing rows"
+		else:
+			self.nn_constrained_col_names.append(col_name)
+			print "NN constraint applied to " + col_name
+
 	def validateColNames(self, col_names_list):
 		
 		for col_name in col_names_list:
@@ -917,7 +1010,9 @@ if __name__ == "__main__":
 	global gscope
 	gscope = GlobalScope()
 
-	if sys.argv[1] == "test":
+	if "timeit" in sys.argv:
+		gscope.setTimed()
+	if len(sys.argv) >= 2 and sys.argv[1] == "test":
 		test()
 	else:
 		start()
