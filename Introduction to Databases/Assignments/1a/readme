@@ -1,0 +1,85 @@
+######################
+# Runing the program #
+######################
+
+Following are the valid commands to start the program - 
+
+
+$: python prog.py customers.csv orders.csv
+
+The filenames can be given as command line arguments and they will be imported before the user can start typing in queries.
+
+$: python prog.py
+
+>> add table for customers.csv
+Table for customers.csv added successfully
+
+>> add table for orders.csv
+Table for orders.csv added successfully
+
+The tables can be created by using the  "add table" query even after the program has started.
+
+$: python prog.py customers.csv orders.csv timeit
+
+"timeit" is an additional flag that is used to time the execution time of a find query. This flag can demonstrate improvement in execution time, when an index is built on a column.
+
+
+#############################
+# DESIGN AND IMPLEMENTATION #
+#############################
+
+I decided to use an object oriented design for this program. Initially, I modelled the Table and Query classes. There is a separate class for each kind of query.
+
+#########                       ###########
+##TABLE##                       ## QUERY ##
+#########                       ###########
+- rows                          - table object
+- getters and setters           - auxiliary info relevant to query
+                                - execute()
+
+The program starts by prompting user to enter a query. This query is handed over to the ParseQuery function which matches it against the regular expressions for each kind of query and hands it over to the HandleQuery, which in turn instantiates a query object of suitable class and starts the execution using ".execute()"
+
+This design helped in iterative addition of new features and classes as the project proceeded.
+
+The next I added was an index class. An object of this class is instantiated only inside the table class. This is because since, table has access to the rows, it makes sense to delegate the responsibility of updating/manipulating the indices to the table class itself, so that the updates for indices need not be triggered explicitly.
+
+To choose the data structure for implementing the index, I compared the performance of a (List + Binary search) data structure with that of the map ( for find, insert operations). "map" is quite faster than the latter, so I chose "map".
+
+I have also implemeted the "NOT NULL, UNIQUE, PRIMARY KEY" constraints. By Primary key, I mean the constraints that are associated with the key. All the constraints are housed inside the table class. The table class exposes an interface to test the constraint on the entire column ( useful when applying the constraint) as well as testing the constraint with a single record (useful when a new record is inserted).
+
+####################
+# READS AND WRITES #
+####################
+
+Since the files are small enough, they are all loaded into the memory all at once. High memory usage is compensated with faster operations on the records. Assuming that the user working with the small files will expect the updates to reflect immediately, the writes are executed immediately. The image of the table inside memory and on secondary storage are forced to sync immediately using flush and sync calls.
+
+###############
+# FIND QUERY ##
+###############
+
+If none of the columns are indexed, the program proceeds with the linear search since the records aren't sorted without the explicit request of the user.
+If an index does exist,
+the find query proceeds by finding the records using any indices that have been built on any columns, followed by a search on the non-indexed columns. The collection of records at any step is processed as a set because a set supports fast intersection operation. 
+
+################
+# INSERT QUERY #
+################
+
+Since the records aren't sorted by default, all the inserts/writes are made to the end of the file. 
+If the user has defined a primary key, the records are sorted by that column and binary search ( bisect ) is used to find the appropriate position for the new record.
+
+All the writes are forced to reflected immediately in the files on secondary storage.
+
+###########################
+# SCREENSHOTS AND TESTING #
+###########################
+
+I am submitting the screenshots demonstrating the features I have explained above. 
+
+In addition to that, I am also submitting a file named "queries". It contains a list of queries that would work with "prog.py" ( on every odd numbered line) and their equivalent SQL queries ( on every even numbered line)
+
+If the command written below is run, 
+
+$: python prog.py test queries
+
+the program validates if the results returned by prog.py and SQL are same for each pair of equivalent queries.
