@@ -234,22 +234,22 @@ ENGINE = InnoDB;
 -- Table `hw2m`.`Headed_by`
 -- -----------------------------------------------------
 CREATE TABLE IF NOT EXISTS `hw2m`.`Headed_by` (
-  `DeptID` INT(8) NOT NULL,
-  `DeptName` VARCHAR(20) NOT NULL,
   `FacultyID` VARCHAR(50) NOT NULL,
   `FacultyFName` VARCHAR(45) NOT NULL,
   `FacultyLName` VARCHAR(45) NOT NULL,
-  PRIMARY KEY (`DeptID`, `DeptName`, `FacultyID`, `FacultyFName`, `FacultyLName`),
+  `DeptID` INT(8) NOT NULL,
+  `DeptName` VARCHAR(20) NOT NULL,
+  PRIMARY KEY (`FacultyID`, `FacultyFName`, `FacultyLName`, `DeptID`, `DeptName`),
   INDEX `fk_Headed_by_idx_1` (`FacultyID` ASC, `FacultyFName` ASC, `FacultyLName` ASC),
-  INDEX `fk_Headed_by_idx_2` (`DeptID` ASC, `DeptName` ASC),
-  CONSTRAINT `fk_Headed_by_1`
-    FOREIGN KEY (`DeptID` , `DeptName`)
-    REFERENCES `hw2m`.`Department` (`ID` , `Name`)
-    ON DELETE NO ACTION
-    ON UPDATE NO ACTION,
+  INDEX `fk_Headed_by_Department1_idx` (`DeptID` ASC, `DeptName` ASC),
   CONSTRAINT `fk_Headed_by_2`
     FOREIGN KEY (`FacultyID` , `FacultyFName` , `FacultyLName`)
     REFERENCES `hw2m`.`Faculty` (`FacultyID` , `FirstName` , `LastName`)
+    ON DELETE NO ACTION
+    ON UPDATE NO ACTION,
+  CONSTRAINT `fk_Headed_by_Department1`
+    FOREIGN KEY (`DeptID` , `DeptName`)
+    REFERENCES `hw2m`.`Department` (`ID` , `Name`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
 ENGINE = InnoDB;
