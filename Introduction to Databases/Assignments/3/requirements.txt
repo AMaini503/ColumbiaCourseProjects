@@ -1,0 +1,12 @@
+ - 3 table design for Person, Student, Faculty
+   - create 3 tables viz. Person, Student, Faculty
+   - create 2 views StudentAll, FacultyAll by joining Person 
+     with Student and Person with Faculty respectively.
+ - Scheduling conflict
+
+ - What you actually need to submit is the same: user stories,    DDL, sample queries and an explanatory document.
+ - Just the DDL, functions, procedures, triggers and views.
+ 
+- procedure to insert person & (student or faculty)
+- views StudentAll, FacultyAll (JOIN base and derived tables)
+- 6 stored procedures
