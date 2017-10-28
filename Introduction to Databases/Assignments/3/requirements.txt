@@ -9,4 +9,37 @@
  
 - procedure to insert person & (student or faculty)
 - views StudentAll, FacultyAll (JOIN base and derived tables)
-- 6 stored procedures
+- 6 procedures for insert, update and delete for both student 		and faculty.
+
+- Add table Student, Faculty
+
+
+-----------------------------------------------------------------
+Implementation changes
+
+Person
+------
+* Add attributes email, last_name, first_name
+* Write generate_uni function for Person table
+
+Student
+--------
+* add foreign key for school
+
+Faculty
+--------
+* add foreign key for department
+
+generate last_name, first_name, email from data generator
+#people = 250
+
+Number of students = 200
+13 department, minimum 10 students per department
+year in [1990, 2017]
+
+Number of faculty = 50
+13 departments, minimum 3 faculty per department
+title in [Assistant Prof, Adjunct Professor, Senior Prof]
+
+* make sure enrollment_limit >= 10 and  <= 100, trigger on sections
+
