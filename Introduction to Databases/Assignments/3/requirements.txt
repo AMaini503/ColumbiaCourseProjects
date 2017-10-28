@@ -50,11 +50,16 @@ title in [Assistant Prof, Adjunct Professor, Senior Prof]
 3) Screen shot of a procedure for creating a Person that also generates a UNI
 4) Screen shot of a trigger that ensures section enrollment does not exceed limit (should we choose a limit?)
 5) Screen shot of a trigger that ensures students don't enroll in a class that they haven't taken the prereqs for
-6) Screen shot of a trigger that ensures faculty aren't teaching more than 3 classes a semester
+6) Screen shot of a trigger that ensures faculty aren't teaching more than 3 classes a semester	
 7) Screen shot of views CoursesTaken and CoursesTaught
 
 ANTHBC4664
 year 1993
 1. ANTHBC6633 (leaf) 00043
 2. ANTHF4356 (leaf) 00256
-3. ANTHC1571 (2.)
+3. ANTHC1571 (2.) 00094
+
+INSERT into course_participant VALUES('ABAD-1','00043');
+INSERT into course_participant VALUES('ABAD-1','00256');
+INSERT into course_participant VALUES('ABAD-1','00094');
+insert into course_participant values('ABAD-1','00011');

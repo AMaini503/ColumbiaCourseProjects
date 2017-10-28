@@ -1,0 +1,7 @@
+CREATE TABLE `Faculty` (
+  `UNI` varchar(12) NOT NULL,
+  `pay_grade` int(11) NOT NULL,
+  `title` varchar(20) NOT NULL,
+  PRIMARY KEY (`UNI`),
+  CONSTRAINT `fk_Faculty_uni` FOREIGN KEY (`UNI`) REFERENCES `Person` (`UNI`) ON DELETE NO ACTION ON UPDATE NO ACTION
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;

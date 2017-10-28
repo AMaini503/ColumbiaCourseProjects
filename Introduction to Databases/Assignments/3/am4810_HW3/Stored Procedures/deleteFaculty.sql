@@ -1,0 +1,12 @@
+CREATE PROCEDURE `deleteFaculty` (IN UNI varchar(12))
+BEGIN
+	DECLARE record_exists BOOL;
+    SET record_exists = EXISTS(SELECT * FROM Person P WHERE P.UNI = UNI);
+    
+    IF NOT record_exists THEN
+		SIGNAL SQLSTATE '01000' SET MESSAGE_TEXT = 'UNI NOT FOUND!';
+	ELSE
+		DELETE F FROM Faculty AS F WHERE F.UNI = UNI;
+        DELETE P FROM Person AS P WHERE P.UNI = UNI;
+	END IF;
+END
